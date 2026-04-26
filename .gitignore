@@ -1,0 +1,11 @@
+# Local environment
+.env
+.env.*
+
+# Python cache
+__pycache__/
+*/__pycache__/
+*.py[cod]
+
+# Local session data
+data/chat_sessions.json
