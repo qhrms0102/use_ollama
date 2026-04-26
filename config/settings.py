@@ -32,5 +32,13 @@ class OllamaSettings(BaseSettings):
 
         return model_map[key]
 
+    @property
+    def api_key(self) -> str | None:
+        return self.ollama_api_key
+
+    @property
+    def base_url(self) -> str:
+        return self.ollama_host if self.use_cloud else self.local_host
+
 
 settings = OllamaSettings()

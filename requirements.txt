@@ -1,3 +1,9 @@
 ollama
 pydantic
 pydantic-settings
+langchain
+langchain-core
+langchain-ollama
+deepagents
+fastapi
+uvicorn
