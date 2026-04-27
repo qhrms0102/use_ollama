@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config.settings import settings
-from deep_agent import create_agent_async
+from deep_agent_with_langgraph import create_agent_async
 from session_store import ChatSessionStore
 
 app = FastAPI(title="Deep Agent Context API")

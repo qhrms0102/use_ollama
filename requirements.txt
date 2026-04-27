@@ -4,6 +4,7 @@ pydantic-settings
 langchain
 langchain-core
 langchain-ollama
+langgraph
 deepagents
 fastapi
 uvicorn
