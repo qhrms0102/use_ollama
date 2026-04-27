@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Any, Literal, TypedDict
 
 import langchain
@@ -240,6 +241,12 @@ def _last_user_text(messages: list[BaseMessage | dict[str, str]]) -> str:
     return ""
 
 
+def _message_text(message: BaseMessage | dict[str, str]) -> str:
+    if isinstance(message, dict):
+        return message.get("content", "")
+    return str(getattr(message, "content", ""))
+
+
 def _last_ai_text(result: Any) -> str:
     messages = result.get("messages", []) if isinstance(result, dict) else []
     for message in reversed(messages):
@@ -250,12 +257,53 @@ def _last_ai_text(result: Any) -> str:
     return ""
 
 
+CITY_CANDIDATES = ("서울", "도쿄", "뉴욕", "Seoul", "Tokyo", "New York")
+
+
+def _extract_cities(text: str) -> list[str]:
+    return [city for city in CITY_CANDIDATES if city in text]
+
+
+def _extract_recent_cities(messages: list[BaseMessage | dict[str, str]]) -> list[str]:
+    fallback: list[str] = []
+
+    for message in reversed(messages):
+        cities = _extract_cities(_message_text(message))
+        if len(cities) >= 2:
+            return cities
+        if cities and not fallback:
+            fallback = cities
+
+    return fallback
+
+
 def _fallback_route(question: str) -> RouteName:
     if any(word in question for word in ("옷", "복장", "입", "clothing")):
         return "clothing_recommendation"
     if any(word in question for word in ("날씨", "온도", "습도", "비", "weather")):
         return "weather_analysis"
     return "general_answer"
+
+
+def _normalize_route(route: Any, question: str) -> RouteName:
+    if any(word in question for word in ("옷", "복장", "입", "clothing")):
+        return "clothing_recommendation"
+    if route in ("weather_analysis", "clothing_recommendation", "general_answer"):
+        return route
+    return _fallback_route(question)
+
+
+def _parse_planner_json(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", stripped)
+    if fenced:
+        stripped = fenced.group(1)
+
+    json_object = re.search(r"\{[\s\S]*\}", stripped)
+    if json_object:
+        stripped = json_object.group(0)
+
+    return json.loads(stripped)
 
 
 def _to_celsius(weather: dict[str, Any]) -> float | None:
@@ -284,10 +332,8 @@ async def planner_node(state: HybridAgentState) -> dict[str, Any]:
     planner_text = _last_ai_text(result)
 
     try:
-        parsed = json.loads(planner_text)
-        route = parsed.get("route")
-        if route not in ("weather_analysis", "clothing_recommendation", "general_answer"):
-            route = _fallback_route(question)
+        parsed = _parse_planner_json(planner_text)
+        route = _normalize_route(parsed.get("route"), question)
         reason = parsed.get("reason", "")
     except json.JSONDecodeError:
         route = _fallback_route(question)
@@ -299,8 +345,9 @@ async def planner_node(state: HybridAgentState) -> dict[str, Any]:
 def extract_scope_node(state: HybridAgentState) -> dict[str, Any]:
     # LangGraph가 반드시 필요한 입력 조건을 구조화하는 단계다.
     question = state.get("question", "")
-    city_candidates = ("서울", "도쿄", "뉴욕", "Seoul", "Tokyo", "New York")
-    cities = [city for city in city_candidates if city in question]
+    cities = _extract_cities(question)
+    if not cities:
+        cities = _extract_recent_cities(state.get("messages", []))
 
     # 실제 제조 챗봇에서는 fab, line, tool_id, lot_id, 기간 등을 여기서 강제 추출한다.
     return {

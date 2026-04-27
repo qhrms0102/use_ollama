@@ -10,7 +10,7 @@
 사용자 질문
   -> planner deep agent
   -> LangGraph route 결정
-  -> 필수 조건 추출
+  -> 필수 조건 추출 및 후속 질문 범위 복원
   -> 정형 데이터 조회/정규화
   -> 데이터 검증
   -> 수치 비교
@@ -78,7 +78,16 @@ planner의 제안을 LangGraph 분기 키로 변환한다.
 
 질문에서 필수 조건을 구조화한다.
 
-현재 예시는 도시명을 추출한다.
+현재 예시는 도시명을 추출한다. 현재 질문에 도시가 없으면 이전 대화 history에서 최근에 함께 언급된 도시 목록을 재사용한다.
+
+예:
+
+```text
+1차 질문: 서울, 도쿄, 뉴욕 중 가장 따뜻한 도시를 찾아줘
+2차 질문: 그럼 각 도시의 옷차림도 추천해줘
+```
+
+2차 질문에는 도시명이 없지만, 이전 질문의 `서울`, `도쿄`, `뉴욕`을 다시 사용한다.
 
 제조 도메인에서는 아래 항목을 추출하는 노드로 바꿀 수 있다.
 
@@ -198,16 +207,71 @@ RAG 조회 노드 예시다.
 from deep_agent_with_langgraph import create_agent_async
 ```
 
-다만 LangGraph 노드 자체를 UI의 작업 기록에 더 자세히 보여주려면 `main.py`에서 처리하는 이벤트 타입을 늘릴 수 있다.
+현재 `main.py`는 LangGraph와 Deep Agent 이벤트를 작업 기록으로 저장한다.
 
-예:
+처리하는 주요 이벤트:
 
 - `on_chain_start`
 - `on_chain_end`
+- `on_tool_start`
+- `on_tool_end`
 - `on_retriever_start`
 - `on_retriever_end`
 
-초기에는 기존 `tool_start/tool_end` 중심 trace만으로 시작해도 된다.
+trace 표시 정책:
+
+- 스트리밍 중에는 최신 raw trace 하나를 현재 진행 블록으로 보여준다.
+- 응답 완료 후 `작업 기록 보기`에서는 같은 tool 호출의 시작/결과를 한 카드로 합친다.
+- LangGraph chain은 바로 연달아 나온 시작/결과만 합친다.
+- chain 중간에 tool 호출이 끼면 `chain 지시 -> tool 결과 -> chain 결과` 순서를 유지한다.
+- tool 호출 카드에는 `via clothing-advisor`, `via load_weather_data`처럼 호출 주체를 표시한다.
+- chain 카드에는 `via` 배지를 표시하지 않는다.
+
+최종 답변 본문은 모든 model chunk를 바로 붙이지 않는다. `analysis_deep_agent` 또는 `general_answer` 노드의 최종 output에서 마지막 메시지만 꺼내 사용자 답변으로 보낸다. 이렇게 해야 `clothing-advisor에게 위임하겠습니다` 같은 내부 진행 멘트가 최종 답변에 섞이지 않는다.
+
+## 작업 기록 예시
+
+질문:
+
+```text
+서울과 도쿄 날씨를 비교하고 옷차림도 추천해줘
+```
+
+작업 기록은 대략 아래처럼 읽힌다.
+
+```text
+planner_deep_agent
+  -> route=clothing_recommendation
+
+extract_required_scope
+  -> cities=["서울", "도쿄"], needs_clothing=true
+
+load_weather_data
+  -> 지시
+
+get_weather
+  -> via load_weather_data
+  -> 서울 조회 결과
+
+get_weather
+  -> via load_weather_data
+  -> 도쿄 조회 결과
+
+load_weather_data
+  -> 결과 취합
+
+validate_weather_data
+  -> validation_notes=[]
+
+compare_weather_metrics
+  -> warmest_city, coldest_city, temperature_gap_c 계산
+
+retrieve_rag_context
+  -> 관련 가이드 문서 조회
+
+analysis_deep_agent
+  -> LangGraph 컨텍스트 기반 최종 답변
+```
 
 ## 제조 도메인으로 확장할 때 권장 구조
 
@@ -248,4 +312,4 @@ LangGraph final guardrail
 - LangGraph와 Deep Agent가 같은 조회나 계산을 반복하지 않게 역할을 분리해야 한다.
 - RAG 결과와 DB 조회 결과는 구분해서 state에 저장하는 편이 좋다.
 - 제조 데이터 분석에서는 누락 조건을 무시하고 답변하지 않는 것이 중요하다.
-- UI에 노드 단위 trace를 보여주려면 `main.py`의 이벤트 처리 범위를 확장해야 한다.
+- UI에 더 깊은 계층형 trace가 필요하면 `parent_id` 저장과 프런트 트리 렌더링을 추가로 설계해야 한다.
