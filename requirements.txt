@@ -7,3 +7,4 @@ langchain-ollama
 deepagents
 fastapi
 uvicorn
+psycopg[binary]

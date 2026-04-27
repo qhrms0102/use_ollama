@@ -1,6 +1,7 @@
 import json
 from pydantic_settings import BaseSettings
 from typing import Dict
+from urllib.parse import quote_plus
 
 
 class LLMSettings(BaseSettings):
@@ -9,6 +10,11 @@ class LLMSettings(BaseSettings):
 
     api_key: str | None = None
     api_host: str = "http://localhost:11434"
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "deepagent_chat"
+    db_user: str = "bogeun"
+    db_password: str | None = None
 
     class Config:
         env_file = ".env"
@@ -32,6 +38,14 @@ class LLMSettings(BaseSettings):
     @property
     def base_url(self) -> str:
         return self.api_host
+
+    @property
+    def database_url(self) -> str:
+        user = quote_plus(self.db_user)
+        password_part = ""
+        if self.db_password:
+            password_part = f":{quote_plus(self.db_password)}"
+        return f"postgresql://{user}{password_part}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 settings = LLMSettings()

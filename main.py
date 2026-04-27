@@ -5,7 +5,6 @@ import re
 import uuid
 import ast
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -13,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from config.settings import settings
 from deep_agent import create_agent_async
 from session_store import ChatSessionStore
 
@@ -26,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-chat_store = ChatSessionStore(Path(__file__).resolve().parent / "data" / "chat_sessions.json")
+chat_store = ChatSessionStore(settings.database_url)
 
 
 class ChatRequest(BaseModel):
