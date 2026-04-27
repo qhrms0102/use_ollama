@@ -160,6 +160,7 @@ TRACEABLE_CHAIN_NAMES = {
 }
 
 STREAMABLE_AGENT_NAMES = {"main-agent", "analysis-agent"}
+GRAPH_FINAL_NODE_NAMES = {"analysis_deep_agent", "general_answer"}
 
 CHAIN_OWNER_BY_NAME = {
     "planner_deep_agent": "planner-agent",
@@ -222,8 +223,11 @@ def extract_tool_owner_name(event: dict[str, Any], chain_names_by_run_id: dict[s
     return agent_name
 
 
-def is_streamable_model_event(event: dict[str, Any]) -> bool:
-    """최종 답변에 섞이면 안 되는 planner/subagent 모델 스트림을 제외한다."""
+def is_streamable_model_event(event: dict[str, Any], chain_names_by_run_id: dict[str, str]) -> bool:
+    """LangGraph 내부 노드의 중간 멘트는 제외하고, plain Deep Agent 최종 스트림은 허용한다."""
+    if any(chain_name in GRAPH_FINAL_NODE_NAMES for chain_name in chain_names_by_run_id.values()):
+        return False
+
     return extract_agent_name(event) in STREAMABLE_AGENT_NAMES
 
 
@@ -309,6 +313,11 @@ async def generate_chat_events(session_id: str, message: str):
             if kind == "on_chat_model_stream":
                 # Deep Agent 내부 중간 멘트가 최종 답변에 섞이지 않도록
                 # graph 노드 결과에서만 사용자 답변을 꺼낸다.
+                if active_tools == 0 and is_streamable_model_event(event, chain_names_by_run_id):
+                    chunk = event["data"]["chunk"]
+                    if chunk.content and isinstance(chunk.content, str):
+                        final_answer_buffer += chunk.content
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.content}, ensure_ascii=False)}\n\n"
                 continue
 
             # ======================
@@ -336,7 +345,7 @@ async def generate_chat_events(session_id: str, message: str):
             elif kind == "on_chain_end" and is_traceable_chain_event(event):
                 output = event["data"].get("output")
                 final_answer = None
-                if extract_event_name(event) in {"analysis_deep_agent", "general_answer"}:
+                if extract_event_name(event) in GRAPH_FINAL_NODE_NAMES:
                     final_answer = extract_final_answer_from_graph_output(output)
                     if final_answer:
                         final_answer_buffer = final_answer
