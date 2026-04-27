@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 import ast
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +122,10 @@ def extract_agent_name(event: dict[str, Any]) -> str:
     return "main-agent"
 
 
+def utc_now_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
 # ==============================
 # 🔹 Streaming
 # ==============================
@@ -135,6 +140,7 @@ async def generate_chat_events(session_id: str, message: str):
     active_tools = 0
     final_answer_buffer = ""
     subagent_call_names: dict[str, str] = {}
+    trace_buffer: list[dict[str, Any]] = []
 
     try:
         async for event in agent.astream_events({"messages": history}, version="v2"):
@@ -169,6 +175,7 @@ async def generate_chat_events(session_id: str, message: str):
                 payload = {
                     "type": "trace",
                     "trace": {
+                        "id": uuid.uuid4().hex,
                         "call_id": call_id,
                         "kind": "tool_start",
                         "name": name,
@@ -178,8 +185,10 @@ async def generate_chat_events(session_id: str, message: str):
                         "agent_name": agent_name,
                         "subagent_name": subagent_name,
                         "input": safe_jsonable(tool_input),
+                        "timestamp": utc_now_ms(),
                     },
                 }
+                trace_buffer.append(payload["trace"])
 
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -200,6 +209,7 @@ async def generate_chat_events(session_id: str, message: str):
                 payload = {
                     "type": "trace",
                     "trace": {
+                        "id": uuid.uuid4().hex,
                         "call_id": call_id,
                         "kind": "tool_end",
                         "name": name,
@@ -210,18 +220,34 @@ async def generate_chat_events(session_id: str, message: str):
                         "agent_name": agent_name,
                         "subagent_name": subagent_name,
                         "output": safe_jsonable(output),
+                        "timestamp": utc_now_ms(),
                     },
                 }
+                trace_buffer.append(payload["trace"])
 
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     except Exception as e:
         logging.exception("Streaming error")
+        error_trace = {
+            "id": uuid.uuid4().hex,
+            "title": "stream_error",
+            "status": "error",
+            "summary": str(e),
+            "timestamp": utc_now_ms(),
+        }
+        trace_buffer.append(error_trace)
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     finally:
-        if final_answer_buffer.strip():
-            chat_store.append_message(session_id, "assistant", final_answer_buffer.strip())
+        assistant_content = final_answer_buffer.strip()
+        if assistant_content or trace_buffer:
+            chat_store.append_message(
+                session_id,
+                "assistant",
+                assistant_content,
+                traces=trace_buffer,
+            )
 
 
 @app.get("/api/sessions")

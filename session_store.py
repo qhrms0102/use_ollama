@@ -12,6 +12,10 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def utc_now_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
 def make_title_from_messages(messages: list[dict[str, str]]) -> str:
     for message in messages:
         if message.get("role") != "user":
@@ -75,7 +79,13 @@ class ChatSessionStore:
     def ensure_session(self, session_id: str) -> dict[str, Any]:
         return self.create_session(session_id)
 
-    def append_message(self, session_id: str, role: str, content: str) -> dict[str, Any]:
+    def append_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        traces: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             data = self._load()
             session = data.get(session_id)
@@ -91,7 +101,10 @@ class ChatSessionStore:
                 data[session_id] = session
 
             session_messages = session.setdefault("messages", [])
-            session_messages.append({"role": role, "content": content})
+            message = {"role": role, "content": content}
+            if traces:
+                message["traces"] = traces
+            session_messages.append(message)
             session["updated_at"] = utc_now_iso()
             session["title"] = make_title_from_messages(session_messages)
             self._save(data)
