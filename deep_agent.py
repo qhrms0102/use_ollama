@@ -2,7 +2,7 @@ import os
 os.environ["no_proxy"] = "*"
 
 from langchain_core.tools import tool
-from langchain.agents.middleware import wrap_tool_call
+from langchain.agents.middleware import wrap_model_call, wrap_tool_call
 from deepagents import create_deep_agent
 from services.llm_service import create_llm
 
@@ -80,6 +80,34 @@ def recommend_clothing(temp_c: float, cond: str) -> str:
 # Middleware
 # =========================
 
+@wrap_model_call
+async def fix_all_messages_async(request, handler):
+    """모든 메시지의 content 필드가 비어있는 경우 공백으로 보정하는 미들웨어.
+
+    [배경]
+    사내 LiteLLM 기반 OpenAI 호환 API 는 tool_calls 가 있는 assistant 메시지라도
+    content 필드가 반드시 존재해야 합니다. 그러나 LangChain 은 tool_calls 만 있고
+    content 가 None 인 메시지를 생성할 수 있어, API 호출 시 422 에러가 발생합니다.
+
+    [동작]
+    - dict 형태 메시지: content 키가 없거나 비어있으면 " " 로 설정
+    - 객체 형태 메시지: content 속성이 없거나 비어있으면 " " 로 설정
+    - 서브에이전트와 메인 에이전트 모두에 적용되어 일관된 방어를 제공합니다.
+    """
+    for msg in request.messages:
+        if isinstance(msg, dict):
+            if not msg.get("content"):
+                msg["content"] = " "
+        elif hasattr(msg, "content"):
+            try:
+                if not msg.content:
+                    msg.content = " "
+            except Exception:
+                pass
+
+    return await handler(request)
+
+
 @wrap_tool_call
 async def log_tool_calls_async(request, handler):
     tc = request.tool_call
@@ -87,7 +115,7 @@ async def log_tool_calls_async(request, handler):
     return await handler(request)
 
 
-COMMON_MIDDLEWARE = [log_tool_calls_async]
+COMMON_MIDDLEWARE = [fix_all_messages_async, log_tool_calls_async]
 
 
 agent_llm = create_llm("model_2")
@@ -112,12 +140,13 @@ SUBAGENTS = [
 5. 같은 대화에서 이미 조회한 도시 날씨가 최근 메시지에 명시되어 있고, 사용자가 새로고침/최신 재조회/다시 조회를 요청하지 않았다면 그 값을 재사용한다.
 6. 절대로 조회하지 않은 데이터를 지어내지 않는다.
 
-[출력]
+        [출력]
 - 도시별 요약
 - 필요한 비교 판단
 - 옷차림 추천은 하지 않는다
 """,
         "tools": [get_weather, convert_to_celsius],
+        "middleware": COMMON_MIDDLEWARE,
     },
     {
         "name": "clothing-advisor",
@@ -134,6 +163,7 @@ SUBAGENTS = [
 - 도시별 추천만 간단히 정리한다
 """,
         "tools": [recommend_clothing],
+        "middleware": COMMON_MIDDLEWARE,
     },
 ]
 
